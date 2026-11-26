@@ -134,7 +134,10 @@ const server = http.createServer(async (req, res) => {
     rates.set(ip, requests);
     if (requests > 600) fail(429, "Слишком много запросов");
     const b = req.method === "POST" ? await body(req) : {},
-      key = req.headers.authorization?.replace(/^Bearer /, "") || "";
+      key =
+        req.headers.authorization?.match(
+          /^Bearer ([A-Za-z0-9_-]{40,64})$/,
+        )?.[1] || "";
     if (!/^[a-zA-Z0-9_-]{40,64}$/.test(key)) fail(401, "Требуется ключ игрока");
     const who = hash(key),
       name = String(b.name || "Игрок").slice(0, 40);
@@ -155,7 +158,7 @@ const server = http.createServer(async (req, res) => {
             increment: b.increment,
           }),
           rev: 0,
-          training: !!b.training,
+          training: b.training === true,
           rematch: null,
           receipts: {},
         };
@@ -180,7 +183,7 @@ const server = http.createServer(async (req, res) => {
       if (!r.guest) {
         r.guest = who;
         r.names[-r.hostColor] = name;
-        r.training &&= !!b.training;
+        r.training &&= b.training === true;
         r.g.started = Date.now();
         r.g.playedFrom = r.g.started;
         r.rev++;
@@ -191,11 +194,21 @@ const server = http.createServer(async (req, res) => {
     const color =
       r.host === who ? r.hostColor : r.guest === who ? -r.hostColor : 0;
     if (!color) fail(403, "Нет места игрока");
-    const h = replay(r.g),
-      s = h.at(-1);
-    if (r.guest && timeout(r.g, s)) {
-      r.rev++;
-      persist(r);
+    const now = Date.now();
+    // Онлайн-партия всегда начинается с обычной начальной позиции.
+    const activeClock = r.g.moves.length % 2;
+    const expired =
+      r.guest &&
+      !r.g.result &&
+      r.g.minutes &&
+      now >= r.g.started + r.g.clock[activeClock];
+    let h;
+    if (expired) {
+      h = replay(r.g);
+      if (timeout(r.g, h.at(-1), now)) {
+        r.rev++;
+        persist(r);
+      }
     }
     if (req.method === "GET") return json(200, state(r, color));
     if (req.method !== "POST" || !r.guest) fail(409, "Ожидание соперника");
@@ -203,6 +216,8 @@ const server = http.createServer(async (req, res) => {
       fail(400, "Нет номера запроса");
     if (r.receipts[who] === b.requestId) return json(200, state(r, color));
     if (b.revision !== r.rev) fail(409, "Позиция изменилась");
+    h ??= replay(r.g);
+    const s = h.at(-1);
     if (b.type === "rematch" && r.g.result) {
       if (r.rematch === -color) {
         r.g = createGame({
@@ -213,7 +228,7 @@ const server = http.createServer(async (req, res) => {
         r.rematch = null;
       } else r.rematch = color;
     } else if (r.g.result) fail(409, "Партия завершена");
-    else if (b.type === "move" && s.t === color && play(r.g, h, b.u)) {
+    else if (b.type === "move" && s.t === color && play(r.g, h, b.u, now)) {
     } else if (b.type === "resign") finish(r.g, -color, "Сдача");
     else if (b.type === "draw") {
       if (r.g.offer === -color) finish(r.g, 0, "Ничья по соглашению");

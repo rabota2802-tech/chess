@@ -34,7 +34,14 @@ import {
 import { board, piece, names } from "./board.js";
 import { unlock, sound } from "./audio.js";
 import { levels, search } from "./engine.js";
-import { variation, explain, classify, scoreText, overview } from "./coach.js";
+import {
+  variation,
+  explain,
+  classify,
+  scoreText,
+  overview,
+  plan,
+} from "./coach.js";
 import { lessons, themes } from "./lessons.js";
 import * as net from "./online.js";
 const $ = (id) => document.getElementById(id),
@@ -103,7 +110,8 @@ function choose(title, options) {
   );
 }
 let profile,
-  storageBlocked = false;
+  storageBlocked = false,
+  saveError = "";
 try {
   profile = load(localStorage);
 } catch (e) {
@@ -121,8 +129,12 @@ function persist() {
       throw Error("Сохранение заблокировано до восстановления копии");
     archive(profile);
     save(localStorage, profile);
+    saveError = "";
   } catch (e) {
-    alertError(e);
+    saveError =
+      "Партия пока сохранена только в этом окне. Скачайте копию в настройках. " +
+      e.message;
+    alertError(Error(saveError));
   }
 }
 let page = "",
@@ -157,7 +169,7 @@ function screen(name) {
   hint = null;
   $("notice").textContent = storageBlocked
     ? "Профиль требует восстановления из копии."
-    : "";
+    : saveError;
   window.scrollTo(0, 0);
 }
 function preferences() {
@@ -660,7 +672,7 @@ function drawGame(animation = false) {
   });
   const end = (winner, reason) => {
     cancel();
-    finish(g, winner, reason);
+    if (!timeout(g, h.at(-1))) finish(g, winner, reason);
     sound(
       winner === 0
         ? "draw"
@@ -693,10 +705,13 @@ function drawGame(animation = false) {
     openLocal(profile.current);
   });
   bind("suggest", () => analysePosition());
-  bind("plan", () => analysePosition());
-  bind("position", () => analysePosition());
+  bind("plan", () => analysePosition(undefined, "plan"));
+  bind("position", () => analysePosition(undefined, "overview"));
   bind("why", () =>
-    g.moves.length ? analysePosition(g.moves.length - 1) : analysePosition(),
+    g.moves.length
+      ? analysePosition(g.moves.length - 1)
+      : ($("coach").textContent =
+          "Сначала сделайте ход. Для начальной позиции доступен анализ."),
   );
   bind("what", () => openReview(g, true));
   app
@@ -712,7 +727,14 @@ function tick() {
   if (page === "game" && timeout(g, s)) {
     cancel();
     persist();
-    sound(g.result.winner === 0 ? "draw" : "loss", profile.prefs);
+    sound(
+      g.result.winner === 0
+        ? "draw"
+        : g.mode === "computer" && g.result.winner !== g.human
+          ? "loss"
+          : "win",
+      profile.prefs,
+    );
     drawGame();
     return;
   }
@@ -747,7 +769,7 @@ function tick() {
 }
 setInterval(tick, 250);
 document.addEventListener("visibilitychange", tick);
-async function analysePosition(i) {
+async function analysePosition(i, mode = "move") {
   if (!validCoach()) return;
   analysisJob?.abort();
   const ctrl = (analysisJob = new AbortController()),
@@ -774,19 +796,27 @@ async function analysePosition(i) {
           });
     details =
       classify(best, actual) +
-      ". Продолжение после хода: " +
+      ". Оценка сыгранного хода для " +
+      (s.t === 1 ? "белых" : "чёрных") +
+      ": " +
+      scoreText(actual.score) +
+      ". Вариант: " +
       variation(s, actual.pv) +
       ". ";
   }
   if (ctrl.signal.aborted) return;
   el.textContent =
     details +
-    explain(s, u) +
-    " " +
-    overview(s) +
+    (mode === "overview"
+      ? overview(s)
+      : mode === "plan"
+        ? plan(s, best.pv)
+        : explain(s, u)) +
     " Рекомендация: " +
     variation(s, best.pv) +
-    ". Оценка для стороны хода: " +
+    ". Оценка лучшего варианта для " +
+    (s.t === 1 ? "белых" : "чёрных") +
+    ": " +
     scoreText(best.score) +
     ".";
   if (i === undefined) {
@@ -852,6 +882,7 @@ function settings() {
       save(localStorage, x, true);
       profile = x;
       storageBlocked = false;
+      saveError = "";
       preferences();
       home();
     } catch (e) {

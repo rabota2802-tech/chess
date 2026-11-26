@@ -23,8 +23,7 @@ export function search(
       20000 + (ms || t),
     );
     const byDepth = {};
-    let pv = [],
-      score = null;
+    const linesByMove = new Map();
     function abort() {
       end(null, new DOMException("Расчёт остановлен", "AbortError"));
     }
@@ -58,15 +57,18 @@ export function search(
         const v = line.match(/ score (cp|mate) (-?\d+)/),
           p = line.match(/ pv (.+)/);
         if (v && p && !/lowerbound|upperbound/.test(line)) {
-          score = { unit: v[1], value: +v[2] };
-          pv = p[1].trim().split(/\s+/);
-          byDepth[line.split(" ")[2]] = { u: pv[0], pv, score };
+          const pv = p[1].trim().split(/\s+/),
+            entry = { u: pv[0], pv, score: { unit: v[1], value: +v[2] } };
+          linesByMove.set(entry.u, entry);
+          if (!/ multipv (?!1 )\d+ /.test(line))
+            byDepth[line.split(" ")[2]] = entry;
         }
       } else if (line.startsWith("bestmove ")) {
         const u = line.split(" ")[1];
-        if (!findMove(state, u))
+        if (!findMove(state, u) || (root && root !== u))
           return end(null, Error("Движок вернул недопустимый ход"));
-        end({ u, score, pv, byDepth });
+        const result = linesByMove.get(u) || { u, score: null, pv: [u] };
+        end({ ...result, byDepth });
       }
     };
     send("uci");

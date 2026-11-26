@@ -129,3 +129,25 @@ test("Мёртвая пешечная позиция и объявление н�
   const g = readPGN("1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. Ng1 *");
   assert.match(gameStatus(replay(g)).claim, /Ng8/);
 });
+test("Возобновление после дедлайна сохраняет реальную дату окончания", () => {
+  const g = createGame({ minutes: 1 }, 1000),
+    h = replay(g);
+  assert.equal(timeout(g, h[0], 200000), true);
+  assert.equal(g.result.at, 61000);
+  assert.deepEqual(g.clock, [0, 60000]);
+});
+test("Тренер различает сторону мата и не называет горизонтальный ход развитием", async () => {
+  const { scoreText, explain } = await import("../js/coach.js");
+  assert.match(scoreText({ unit: "mate", value: -3 }), /соперник.*3/);
+  assert.match(scoreText({ unit: "cp", value: 125 }), /\+1\.25/);
+  const s = parseFen("4k3/8/8/8/8/8/8/2B1K3 w - - 0 1");
+  assert.match(explain(s, "c1f4"), /горизонтали/);
+});
+test("План тренера опирается на легальную линию и не выдумывает ответ", async () => {
+  const { plan } = await import("../js/coach.js"),
+    s = parseFen(startFen);
+  const text = plan(s, ["e2e4", "e7e5", "g1f3"]);
+  assert.match(text, /расчётных ответов — e5/);
+  assert.match(text, /продолжить Nf3/);
+  assert.doesNotMatch(plan(s, ["e2e4", "e7e3"]), /ответов/);
+});

@@ -28,6 +28,10 @@ export function validate(x) {
     )
   )
     throw Error("Неверный формат копии");
+  if (x.puzzleRating !== undefined && !Number.isSafeInteger(x.puzzleRating))
+    throw Error("Некорректный рейтинг задач");
+  if (Object.entries(x.games).some(([id, g]) => id !== g?.id))
+    throw Error("Некорректный идентификатор архивной партии");
   for (const g of [
     ...Object.values(x.games),
     ...(x.current ? [x.current] : []),
@@ -37,7 +41,18 @@ export function validate(x) {
       !Array.isArray(g.clock) ||
       g.clock.length !== 2 ||
       !g.clock.every(Number.isFinite) ||
+      typeof g.id !== "string" ||
       !g.id ||
+      !["computer", "local", "import", "online"].includes(g.mode) ||
+      ![1, -1].includes(g.human) ||
+      !Number.isFinite(g.minutes) ||
+      g.minutes < 0 ||
+      !Number.isFinite(g.increment) ||
+      g.increment < 0 ||
+      (g.result &&
+        (![0, 1, -1].includes(g.result.winner) ||
+          !Number.isFinite(g.result.at) ||
+          typeof g.result.reason !== "string")) ||
       !Number.isFinite(g.started)
     )
       throw Error("Повреждённая партия");

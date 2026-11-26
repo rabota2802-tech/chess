@@ -111,7 +111,8 @@ export function timeout(g, s, now = Date.now()) {
     !lockedKings(s) &&
     !knightAlone &&
     !(bishopsOnly && bishopColors.size === 1);
-  finish(g, possible ? -s.t : 0, "Время истекло", now);
+  const expiredAt = g.started + g.clock[s.t === 1 ? 0 : 1];
+  finish(g, possible ? -s.t : 0, "Время истекло", expiredAt);
   return true;
 }
 export function play(g, h, u, now = Date.now()) {

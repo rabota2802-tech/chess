@@ -24,11 +24,11 @@ function endpoint() {
     throw Error("Для сервера требуется HTTPS");
   return url.origin;
 }
-async function request(path, b) {
-  const r = await fetch(session.base + "/api/rooms" + path, {
+async function request(path, b, player = session) {
+  const r = await fetch(player.base + "/api/rooms" + path, {
     method: b ? "POST" : "GET",
     headers: {
-      Authorization: "Bearer " + session.key,
+      Authorization: "Bearer " + player.key,
       ...(b ? { "Content-Type": "application/json" } : {}),
     },
     body: b ? JSON.stringify(b) : undefined,
@@ -42,19 +42,29 @@ async function request(path, b) {
   return x;
 }
 export async function connect(data, inv) {
-  session = onlineSession();
-  const base = endpoint();
-  if (!inv || !session || session.id !== inv.id || session.base !== base) {
-    session = { base, key: secret(), id: inv?.id };
-    store();
+  const previous = onlineSession(),
+    base = endpoint();
+  const reuse = inv && previous?.id === inv.id && previous.base === base;
+  const player = reuse ? previous : { base, key: secret(), id: inv?.id };
+  // Keep the current room until the next server acknowledges the new seat.
+  const pendingKey = "chess-online-joining";
+  let joining;
+  if (inv) {
+    try {
+      joining = JSON.parse(localStorage.getItem(pendingKey));
+    } catch {}
+    if (!reuse && joining?.base === base && joining.id === inv.id)
+      player.key = joining.key;
+    localStorage.setItem(pendingKey, JSON.stringify(player));
   }
   const x = await request(
     inv ? "/" + inv.id + "/join" : "",
     inv ? { ...data, invite: inv.secret } : data,
+    player,
   );
-  session.id = x.id;
-  session.invite = x.invite;
+  session = { ...player, id: x.id, invite: x.invite };
   store();
+  localStorage.removeItem(pendingKey);
   return x;
 }
 async function deliver() {

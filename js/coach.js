@@ -1,4 +1,13 @@
-import { attacked, apply, side, sq, checked, san, legal } from "./rules.js";
+import {
+  attacked,
+  apply,
+  side,
+  sq,
+  checked,
+  san,
+  legal,
+  key,
+} from "./rules.js";
 import { findMove } from "./game.js";
 import { names } from "./board.js";
 export function variation(s, pv, limit = 7) {
@@ -10,6 +19,26 @@ export function variation(s, pv, limit = 7) {
     s = apply(s, m);
   }
   return out.join(" ");
+}
+export function plan(s, line) {
+  const m = findMove(s, line[0]);
+  if (!m) return "";
+  const n = apply(s, m),
+    reply = findMove(n, line[1]);
+  const first = "Рассмотрите " + san(s, m) + ". " + explain(s, key(m));
+  if (!reply) return first;
+  const after = apply(n, reply),
+    continuation = findMove(after, line[2]);
+  return (
+    first +
+    " Один из расчётных ответов — " +
+    san(n, reply) +
+    ". " +
+    explain(n, key(reply)) +
+    (continuation
+      ? " Тогда можно продолжить " + san(after, continuation) + "."
+      : "")
+  );
 }
 export function explain(s, u) {
   const m = findMove(s, u);
@@ -29,7 +58,11 @@ export function explain(s, u) {
     out.push(legal(n).length ? "Король соперника под шахом." : "Это мат.");
   if (["d4", "e4", "d5", "e5"].includes(to))
     out.push("Фигура занимает центральное поле.");
-  if (["n", "b"].includes(p) && [0, 7].includes(m[0] >> 4))
+  if (
+    ["n", "b"].includes(p) &&
+    m[0] >> 4 === (s.t === 1 ? 7 : 0) &&
+    m[1] >> 4 !== m[0] >> 4
+  )
     out.push("Лёгкая фигура выходит с исходной горизонтали.");
   const threats = [],
     defended = [];
@@ -52,7 +85,15 @@ export function explain(s, u) {
   return out.join(" ").trim();
 }
 export const scoreText = (s) =>
-  !s ? "—" : s.unit === "mate" ? "Мат " + s.value : (s.value / 100).toFixed(2);
+  !s
+    ? "нет оценки"
+    : s.unit === "mate"
+      ? s.value === 0
+        ? "мат на доске"
+        : s.value > 0
+          ? "своими фигурами мат за " + s.value
+          : "соперник ставит мат за " + Math.abs(s.value)
+      : (s.value > 0 ? "+" : "") + (s.value / 100).toFixed(2) + " пеш.";
 export function classify(best, actual) {
   if (best.byDepth && actual.byDepth) {
     const depth = Object.keys(best.byDepth)
@@ -114,7 +155,7 @@ export function features(s, m) {
   for (let i = 0; i < 120; i++) {
     if (i & 8 || side(n.b[i]) !== s.t || !"brq".includes(n.b[i].toLowerCase()))
       continue;
-    if (i !== to) {
+    if (i !== to && s.b[i] === n.b[i]) {
       const exposed = targets(n, i).filter(
         (j) => side(n.b[j]) === -s.t && !targets(s, i).includes(j),
       );
