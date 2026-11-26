@@ -9,6 +9,18 @@ shopt -s nullglob
 daily_copies() {
   copies=("$backups"/rooms-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].sqlite)
 }
+public_health() {
+  local response
+  response=$(curl -q -fsS --connect-timeout 4 --max-time 10 "$@" \
+    -w '\n%{http_code}' https://chess-api.alliancegrad.ru/health) || return 1
+  [[ ${response##*$'\n'} == 200 ]] || return 1
+  python3 -c 'import json,sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+sys.exit(not isinstance(data, dict) or data.get("ok") is not True)' <<< "${response%$'\n'*}"
+}
 case ${1:-} in
   backup)
     install -d -m 0700 "$backups"
@@ -30,14 +42,45 @@ case ${1:-} in
     done
     ;;
   check)
-    "${compose[@]}" exec -T chess node -e "fetch('http://127.0.0.1:8787/health').then(async r=>{if(!r.ok||!(await r.json()).ok)process.exit(1)})"
-    curl -fsS --max-time 10 https://chess-api.alliancegrad.ru/health |
-      python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("ok") is not True)'
+    sqlite=ok
+    if ! timeout 15s "${compose[@]}" exec -T chess node -e \
+      "fetch('http://127.0.0.1:8787/health').then(async r=>{if(r.status!==200||(await r.json()).ok!==true)process.exit(1)}).catch(()=>process.exit(1))"; then
+      sqlite=failed
+    fi
+    https=ok
+    dns_path=system
+    if ! public_health; then
+      if public_health --doh-url https://dns.google/dns-query; then
+        dns_path=independent-only
+      else
+        https=failed
+        dns_path=both-failed
+      fi
+    fi
     daily_copies
-    (( ${#copies[@]} > 0 )) || { echo "Chess backup missing" >&2; exit 1; }
-    latest=${copies[${#copies[@]}-1]}
-    [[ -s $latest && $(stat -c %Y "$latest") -ge $(($(date +%s)-36*3600)) ]] ||
-      { echo "Chess backup missing or older than 36 hours" >&2; exit 1; }
+    backup=missing
+    if (( ${#copies[@]} > 0 )); then
+      latest=${copies[${#copies[@]}-1]}
+      if [[ -s $latest ]] && mtime=$(stat -c %Y "$latest"); then
+        age=$(( $(date +%s) - mtime ))
+        if (( age >= -300 && age <= 36*3600 )); then
+          backup=ok
+        else
+          backup=invalid-age
+        fi
+      else
+        backup=unreadable-or-empty
+      fi
+    fi
+    summary="sqlite=$sqlite https=$https dns_path=$dns_path backup=$backup"
+    if [[ $sqlite != ok || $https != ok || $backup != ok ]]; then
+      echo "<3>ERROR $summary"
+      exit 1
+    elif [[ $dns_path == independent-only ]]; then
+      echo "<4>DEGRADED $summary"
+      exit 2
+    fi
+    echo "<6>OK $summary"
     ;;
   *) echo "Usage: chess-maintenance backup|check" >&2; exit 2 ;;
 esac
