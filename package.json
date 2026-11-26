@@ -1,0 +1,11 @@
+{
+  "name": "chess-offline",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "build": "node scripts/cache.js",
+    "start": "node server/main.js"
+  }
+}
