@@ -16,15 +16,15 @@ function secret() {
   ).join("");
 }
 function endpoint() {
-  const url = new URL(localStorage.getItem("chess-server") || location.origin);
-  if (
-    url.protocol !== "https:" &&
-    !["127.0.0.1", "localhost"].includes(url.hostname)
-  )
-    throw Error("Для сервера требуется HTTPS");
-  return url.origin;
+  return location.origin === "https://rabota2802-tech.github.io"
+    ? "https://chess-api.alliancegrad.ru"
+    : location.origin;
 }
 async function request(path, b, player = session) {
+  if (!navigator.onLine)
+    throw Error(
+      "Для онлайн-партии нужен интернет. Остальные разделы доступны без сети.",
+    );
   const r = await fetch(player.base + "/api/rooms" + path, {
     method: b ? "POST" : "GET",
     headers: {
@@ -33,7 +33,14 @@ async function request(path, b, player = session) {
     },
     body: b ? JSON.stringify(b) : undefined,
     cache: "no-store",
+    credentials: "omit",
+    redirect: "error",
+    referrerPolicy: "no-referrer",
     signal: AbortSignal.timeout(8000),
+  }).catch(() => {
+    throw Error(
+      "Нет связи с игровым сервером. Попробуйте позже или сыграйте офлайн.",
+    );
   });
   if (!r.headers.get("content-type")?.includes("application/json"))
     throw Error("Сервер онлайн-игры не настроен");
@@ -110,12 +117,11 @@ export function invitation() {
   const url = new URL(location.href);
   url.hash = new URLSearchParams({
     room: session.id + "." + session.invite,
-    server: session.base,
   }).toString();
   return url.href;
 }
 export function readInvite() {
   const q = new URLSearchParams(location.hash.slice(1)),
     m = q.get("room")?.match(/^([a-f0-9]{24})\.([\w-]{43})$/);
-  return m ? { id: m[1], secret: m[2], base: q.get("server") } : null;
+  return m ? { id: m[1], secret: m[2] } : null;
 }

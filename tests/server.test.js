@@ -47,6 +47,15 @@ test("Комнаты, права двух игроков, часы, повтор
     });
     assert.equal(status, 201);
     const path = "/" + created.id;
+    const denied = await fetch(url + "/api/rooms" + path, {
+      headers: {
+        Origin: "https://example.invalid",
+        Authorization: "Bearer " + keys[0],
+      },
+    });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.headers.get("access-control-allow-origin"), null);
+    assert.equal(denied.headers.get("cache-control"), "no-store");
     const [joined, guest] = await req(path + "/join", 1, {
       invite: created.invite,
       training: false,
@@ -103,6 +112,10 @@ test("Комнаты, права двух игроков, часы, повтор
     }
     assert.equal(r.game.result, null);
     assert.deepEqual(r.game.moves, []);
+    // Both clients use the same loopback peer, as they would behind a proxy.
+    for (let i = 0; i < 180; i++) await req(path, 0);
+    assert.equal((await req(path, 0))[0], 429);
+    assert.equal((await req(path, 1))[0], 200);
   } finally {
     if (proc) await stop();
     await rm(dir, { recursive: true });

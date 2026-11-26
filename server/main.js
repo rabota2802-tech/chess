@@ -24,6 +24,11 @@ const rates = new Map(),
 function fail(status, msg) {
   throw Object.assign(Error(msg), { status });
 }
+function limit(bucket, max) {
+  const count = rates.get(bucket) || 0;
+  if (count >= max) fail(429, "Слишком много запросов");
+  rates.set(bucket, count + 1);
+}
 function persist(r) {
   db.prepare("INSERT OR REPLACE INTO rooms VALUES(?,?,?)").run(
     r.id,
@@ -62,13 +67,15 @@ const cleanup = setInterval(() => {
 }, 60000);
 cleanup.unref();
 async function body(req) {
-  let s = "";
+  const chunks = [];
+  let size = 0;
   for await (const chunk of req) {
-    s += chunk;
-    if (s.length > 8192) fail(413, "Слишком большой запрос");
+    size += chunk.length;
+    if (size > 8192) fail(413, "Слишком большой запрос");
+    chunks.push(chunk);
   }
   try {
-    const data = JSON.parse(s || "{}");
+    const data = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
     if (!data || typeof data !== "object" || Array.isArray(data)) throw Error();
     return data;
   } catch {
@@ -88,7 +95,10 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost"),
       path = url.pathname,
       origin = req.headers.origin;
-    if (path === "/health") return json(200, { ok: true });
+    if (path === "/health") {
+      db.prepare("SELECT id FROM rooms LIMIT 1").get();
+      return json(200, { ok: true });
+    }
     if (!path.startsWith("/api/")) {
       if (!["GET", "HEAD"].includes(req.method)) fail(405, "Метод");
       const name = path.replace(/^\/chess\//, "") || "index.html";
@@ -129,19 +139,25 @@ const server = http.createServer(async (req, res) => {
       });
       return res.end();
     }
-    const ip = req.socket.remoteAddress,
-      requests = (rates.get(ip) || 0) + 1;
-    rates.set(ip, requests);
-    if (requests > 600) fail(429, "Слишком много запросов");
-    const b = req.method === "POST" ? await body(req) : {},
-      key =
-        req.headers.authorization?.match(
-          /^Bearer ([A-Za-z0-9_-]{40,64})$/,
-        )?.[1] || "";
-    if (!/^[a-zA-Z0-9_-]{40,64}$/.test(key)) fail(401, "Требуется ключ игрока");
+    const anonymous = "visitor:" + req.socket.remoteAddress;
+    const key =
+      req.headers.authorization?.match(
+        /^Bearer ([A-Za-z0-9_-]{40,64})$/,
+      )?.[1] || "";
+    if (!key) {
+      limit(anonymous, 600);
+      fail(401, "Требуется ключ игрока");
+    }
+    const creating = path === "/api/rooms" && req.method === "POST";
+    const match = path.match(/^\/api\/rooms\/([a-f0-9]{24})(\/join)?$/);
+    if (creating || match?.[2] || !match) limit(anonymous, 600);
+    if (!creating && !match) fail(404, "Комната не найдена");
+    if (creating) limit("create:" + req.socket.remoteAddress, 60);
+    if (req.method === "POST") limit("write:" + req.socket.remoteAddress, 1200);
+    const b = req.method === "POST" ? await body(req) : {};
     const who = hash(key),
       name = String(b.name || "Игрок").slice(0, 40);
-    if (path === "/api/rooms" && req.method === "POST") {
+    if (creating) {
       setup(b);
       const id = randomBytes(12).toString("hex"),
         invite = token(),
@@ -165,12 +181,13 @@ const server = http.createServer(async (req, res) => {
       persist(r);
       return json(201, { ...state(r, b.color), invite });
     }
-    const match = path.match(/^\/api\/rooms\/([a-f0-9]{24})(\/join)?$/);
-    if (!match) fail(404, "Комната не найдена");
     const row = db
       .prepare("SELECT data FROM rooms WHERE id=? AND expires>?")
       .get(match[1], Date.now());
-    if (!row) fail(404, "Срок комнаты истёк");
+    if (!row) {
+      if (!match[2]) limit(anonymous, 600);
+      fail(404, "Срок комнаты истёк");
+    }
     const r = JSON.parse(row.data);
     if (match[2]) {
       if (
@@ -193,7 +210,12 @@ const server = http.createServer(async (req, res) => {
     }
     const color =
       r.host === who ? r.hostColor : r.guest === who ? -r.hostColor : 0;
-    if (!color) fail(403, "Нет места игрока");
+    if (!color) {
+      limit(anonymous, 600);
+      fail(403, "Нет места игрока");
+    }
+    // Only verified seats get separate quotas, independent of the proxy address.
+    limit("seat:" + r.id + ":" + color, 180);
     const now = Date.now();
     // Онлайн-партия всегда начинается с обычной начальной позиции.
     const activeClock = r.g.moves.length % 2;

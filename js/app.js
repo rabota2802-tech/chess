@@ -287,7 +287,7 @@ function setup(mode) {
         '<div id="custom" hidden><label>Минуты<input type="number" id="minutes" min="1" max="1440" value="10"></label><label>Добавление, секунд<input type="number" id="increment" min="0" max="600" value="0"></label></div>'
       : "") +
     (online
-      ? '<label>Имя<input id="name" maxlength="40" value="Игрок"></label><label><input id="training" type="checkbox"> Разрешить тренера обоим игрокам</label><label>Адрес игрового сервера<input id="server" type="url" required></label>'
+      ? '<label>Имя<input id="name" maxlength="40" value="Игрок"></label><label><input id="training" type="checkbox"> Разрешить тренера обоим игрокам</label>'
       : "") +
     '<button class="primary">' +
     (inv
@@ -297,8 +297,9 @@ function setup(mode) {
         : "Начать партию") +
     "</button></form>";
   if (online) {
-    $("server").value =
-      inv?.base || localStorage.getItem("chess-server") || location.origin;
+    if (!navigator.onLine)
+      $("notice").textContent =
+        "Для онлайн-партии нужен интернет. Остальные разделы доступны без сети.";
     if (net.onlineSession()?.id && !inv) {
       app.insertAdjacentHTML(
         "beforeend",
@@ -328,7 +329,6 @@ function setup(mode) {
               ? -1
               : 1;
       if (online) {
-        localStorage.setItem("chess-server", new URL($("server").value).origin);
         const snap = await net.connect(
           {
             name: $("name").value,
@@ -800,9 +800,9 @@ async function analysePosition(i, mode = "move") {
       (s.t === 1 ? "белых" : "чёрных") +
       ": " +
       scoreText(actual.score) +
-      ". Вариант: " +
-      variation(s, actual.pv) +
-      ". ";
+      ". " +
+      plan(s, actual.pv, true) +
+      " ";
   }
   if (ctrl.signal.aborted) return;
   el.textContent =
@@ -811,7 +811,9 @@ async function analysePosition(i, mode = "move") {
       ? overview(s)
       : mode === "plan"
         ? plan(s, best.pv)
-        : explain(s, u)) +
+        : i === undefined
+          ? explain(s, u)
+          : "") +
     " Рекомендация: " +
     variation(s, best.pv) +
     ". Оценка лучшего варианта для " +
@@ -1247,11 +1249,11 @@ function renderReview() {
         text:
           classify(best, actual) +
           ". " +
-          explain(pos, u) +
+          plan(pos, actual.pv, true) +
           " Оценка: " +
           scoreText(sc) +
           ". Лучший вариант: " +
-          variation(pos, best.pv),
+          (best.u === u ? variation(pos, best.pv) : plan(pos, best.pv)),
         white:
           pos.t *
           (sc?.unit === "mate" ? Math.sign(sc.value) * 1000 : sc?.value || 0),
@@ -1495,7 +1497,19 @@ else home();
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker
     .register("./sw.js")
-    .then(() => navigator.serviceWorker.ready)
+    .then((reg) => {
+      function showUpdate() {
+        if (reg.waiting && navigator.serviceWorker.controller)
+          $("update").textContent =
+            "Обновление готово. После партии закройте все окна игры и откройте её снова.";
+      }
+      showUpdate();
+      const watch = () =>
+        reg.installing?.addEventListener("statechange", showUpdate);
+      watch();
+      reg.addEventListener("updatefound", watch);
+      return navigator.serviceWorker.ready;
+    })
     .then((reg) => {
       const channel = new MessageChannel();
       channel.port1.onmessage = (e) => {

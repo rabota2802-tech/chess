@@ -151,3 +151,10 @@ test("План тренера опирается на легальную лин�
   assert.match(text, /продолжить Nf3/);
   assert.doesNotMatch(plan(s, ["e2e4", "e7e3"]), /ответов/);
 });
+test("Тренер проверяет, может ли связанный конь взять пешку", async () => {
+  const { explain } = await import("../js/coach.js");
+  const pinned = parseFen("4k3/8/2n5/1B6/8/8/1P6/4K3 w - - 0 1");
+  const free = parseFen("5k2/8/2n5/1B6/8/8/1P6/4K3 w - - 0 1");
+  assert.doesNotMatch(explain(pinned, "b2b4"), /Nxb4/);
+  assert.match(explain(free, "b2b4"), /Nxb4/);
+});

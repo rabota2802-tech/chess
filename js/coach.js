@@ -20,12 +20,16 @@ export function variation(s, pv, limit = 7) {
   }
   return out.join(" ");
 }
-export function plan(s, line) {
+export function plan(s, line, played = false) {
   const m = findMove(s, line[0]);
   if (!m) return "";
   const n = apply(s, m),
     reply = findMove(n, line[1]);
-  const first = "Рассмотрите " + san(s, m) + ". " + explain(s, key(m));
+  const first =
+    (played ? "Сыграно " : "Рассмотрите ") +
+    san(s, m) +
+    ". " +
+    explain(s, key(m));
   if (!reply) return first;
   const after = apply(n, reply),
     continuation = findMove(after, line[2]);
@@ -66,22 +70,36 @@ export function explain(s, u) {
     out.push("Лёгкая фигура выходит с исходной горизонтали.");
   const threats = [],
     defended = [];
+  // Inspect prospective captures if the opponent leaves the position intact.
+  const before = new Set(legal(s).map((move) => move[1]));
+  const nextMoves = legal({ ...n, t: s.t, ep: -1 });
+  const after = new Set(nextMoves.map((move) => move[1]));
   for (let i = 0; i < 120; i++) {
     if (i & 8 || n.b[i] === "." || i === m[1]) continue;
-    if (!attacked(s, i, s.t) && attacked(n, i, s.t))
-      (side(n.b[i]) === s.t ? defended : threats).push(sq(i));
+    if (side(n.b[i]) === -s.t && !before.has(i) && after.has(i))
+      threats.push(sq(i));
+    if (side(n.b[i]) === s.t && !attacked(s, i, s.t) && attacked(n, i, s.t))
+      defended.push(sq(i));
   }
   if (threats.length)
     out.push(
-      "Новые поля с атакованными фигурами соперника: " +
+      "Возможная цель — подготовить взятие на " +
         threats.join(", ") +
-        ".",
+        ", если соперник позволит.",
     );
   if (defended.length)
-    out.push("Появилась защита фигур на " + defended.join(", ") + ".");
-  if (attacked(n, m[1], -s.t) && !attacked(n, m[1], s.t))
-    out.push("На новом поле фигура под ударом и без защиты.");
-  out.push(features(s, m));
+    out.push(
+      "Свои фигуры теперь контролируют поля " + defended.join(", ") + ".",
+    );
+  const capture = legal(n).find(
+    (move) => (move[3] === "ep" ? move[1] + 16 * n.t : move[1]) === m[1],
+  );
+  if (capture) {
+    out.push(
+      "Соперник может ответить " + san(n, capture) + " и взять эту фигуру.",
+    );
+  }
+  out.push(features(s, m, n, nextMoves));
   return out.join(" ").trim();
 }
 export const scoreText = (s) =>
@@ -142,16 +160,23 @@ function targets(s, from) {
   }
   return out;
 }
-export function features(s, m) {
-  const n = apply(s, m),
-    to = m[1],
+function features(s, m, n, nextMoves) {
+  const to = m[1],
     out = [],
     pieces = n.b;
   const hits = targets(n, to).filter(
-    (i) => side(pieces[i]) === -s.t && pieces[i].toLowerCase() !== "p",
+    (i) =>
+      side(pieces[i]) === -s.t &&
+      pieces[i].toLowerCase() !== "p" &&
+      (pieces[i].toLowerCase() === "k" ||
+        nextMoves.some((move) => move[0] === to && move[1] === i)),
   );
   if (hits.length >= 2)
-    out.push("Двойной удар: фигура атакует " + hits.map(sq).join(" и ") + ".");
+    out.push(
+      "Возможная цель — двойной удар по фигурам на " +
+        hits.map(sq).join(" и ") +
+        ".",
+    );
   for (let i = 0; i < 120; i++) {
     if (i & 8 || side(n.b[i]) !== s.t || !"brq".includes(n.b[i].toLowerCase()))
       continue;
