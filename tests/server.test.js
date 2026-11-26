@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,9 +12,9 @@ test("Комнаты, права двух игроков, часы, повтор
       randomBytes(32).toString("base64url"),
     );
   let proc, url;
-  async function start() {
+  async function start(database = "rooms.sqlite") {
     proc = spawn(process.execPath, ["server/main.js"], {
-      env: { ...process.env, PORT: "0", CHESS_DB: join(dir, "rooms.sqlite") },
+      env: { ...process.env, PORT: "0", CHESS_DB: join(dir, database) },
       stdio: ["ignore", "pipe", "inherit"],
     });
     const [line] = await once(proc.stdout, "data");
@@ -76,8 +76,13 @@ test("Комнаты, права двух игроков, часы, повтор
       (await req(path, 0, { ...move, requestId: randomUUID() }))[0],
       409,
     );
+    execFileSync(
+      process.execPath,
+      ["server/backup.mjs", join(dir, "restore.sqlite")],
+      { env: { ...process.env, CHESS_DB: join(dir, "rooms.sqlite") } },
+    );
     await stop();
-    await start();
+    await start("restore.sqlite");
     let r = (await req(path, 1))[1];
     assert.deepEqual(r.game.moves, ["e2e4"]);
     for (const [player, type] of [

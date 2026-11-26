@@ -6,9 +6,22 @@ services:
     environment:
       ORIGINS: ${CHESS_ORIGINS:-http://127.0.0.1:8787,http://localhost:8787}
     ports:
-      - "127.0.0.1:8787:8787"
+      - "127.0.0.1:${CHESS_PORT:-8787}:8787"
     volumes:
       - rooms:/data
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 64
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 volumes:
   rooms:

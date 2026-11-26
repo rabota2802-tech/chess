@@ -1,3 +1,4 @@
 chess.sqlite*
 node_modules/
 .DS_Store
+/release-artifacts/
