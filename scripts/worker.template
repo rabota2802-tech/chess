@@ -1,0 +1,27 @@
+const scope=self.registration.scope;
+const prefix='chess:'+scope+':';
+const cacheName=prefix+revision;
+const url=file=>new URL(file,scope).href;
+self.addEventListener('install',event=>event.waitUntil((async()=>{
+ const cache=await caches.open(cacheName);
+ try{for(const [file,expected] of Object.entries(assets)){
+ const response=await fetch(url(file),{cache:'reload',credentials:'same-origin'});
+ if(!response.ok)throw Error(file);
+ const digest=await crypto.subtle.digest('SHA-256',await response.clone().arrayBuffer());
+ const actual=Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
+ if(actual!==expected)throw Error('Контрольная сумма: '+file);
+ await cache.put(url(file),response);
+ }}catch(err){await caches.delete(cacheName);throw err;}
+})()));
+self.addEventListener('activate',event=>event.waitUntil((async()=>{
+ for(const name of await caches.keys())if(name.startsWith(prefix)&&name!==cacheName)await caches.delete(name);
+ await self.clients.claim();
+})()));
+self.addEventListener('fetch',event=>{const r=event.request;if(r.method!=='GET'||!r.url.startsWith(scope))return;
+ let file=r.url.slice(scope.length);if(!file||file.startsWith('?'))file='index.html';
+ if(!Object.hasOwn(assets,file))return;
+ event.respondWith(caches.open(cacheName).then(async c=>(await c.match(url(file)))||fetch(r)));
+});
+self.addEventListener('message',event=>{if(event.data!=='verify')return;
+ event.waitUntil(caches.open(cacheName).then(async c=>event.ports[0]?.postMessage({ready:(await Promise.all(Object.keys(assets).map(f=>c.match(url(f))))).every(Boolean)})));
+});
