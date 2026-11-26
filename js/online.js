@@ -1,0 +1,111 @@
+const SESSION = "chess-online-session";
+let session;
+export function onlineSession() {
+  try {
+    return (session = JSON.parse(localStorage.getItem(SESSION)));
+  } catch {
+    return null;
+  }
+}
+function store() {
+  localStorage.setItem(SESSION, JSON.stringify(session));
+}
+function secret() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(24)), (n) =>
+    n.toString(16).padStart(2, "0"),
+  ).join("");
+}
+function endpoint() {
+  const url = new URL(localStorage.getItem("chess-server") || location.origin);
+  if (
+    url.protocol !== "https:" &&
+    !["127.0.0.1", "localhost"].includes(url.hostname)
+  )
+    throw Error("Для сервера требуется HTTPS");
+  return url.origin;
+}
+async function request(path, b) {
+  const r = await fetch(session.base + "/api/rooms" + path, {
+    method: b ? "POST" : "GET",
+    headers: {
+      Authorization: "Bearer " + session.key,
+      ...(b ? { "Content-Type": "application/json" } : {}),
+    },
+    body: b ? JSON.stringify(b) : undefined,
+    cache: "no-store",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.headers.get("content-type")?.includes("application/json"))
+    throw Error("Сервер онлайн-игры не настроен");
+  const x = await r.json();
+  if (!r.ok) throw Object.assign(Error(x.error), { status: r.status });
+  return x;
+}
+export async function connect(data, inv) {
+  session = onlineSession();
+  const base = endpoint();
+  if (!inv || !session || session.id !== inv.id || session.base !== base) {
+    session = { base, key: secret(), id: inv?.id };
+    store();
+  }
+  const x = await request(
+    inv ? "/" + inv.id + "/join" : "",
+    inv ? { ...data, invite: inv.secret } : data,
+  );
+  session.id = x.id;
+  session.invite = x.invite;
+  store();
+  return x;
+}
+async function deliver() {
+  const target = session,
+    body = target.pending;
+  try {
+    const x = await request("/" + target.id, body);
+    if (session === target && target.pending === body) {
+      delete target.pending;
+      store();
+    }
+    return x;
+  } catch (e) {
+    if (
+      e.status >= 400 &&
+      e.status < 500 &&
+      e.status !== 429 &&
+      session === target &&
+      target.pending === body
+    ) {
+      delete target.pending;
+      store();
+    }
+    throw e;
+  }
+}
+export const poll = () =>
+  session.pending ? deliver() : request("/" + session.id);
+export function action(snapshot, type, u) {
+  if (!session.pending) {
+    session.pending = {
+      type,
+      u,
+      requestId: crypto.randomUUID(),
+      revision: snapshot.revision,
+    };
+    store();
+  }
+  return deliver();
+}
+export function invitation() {
+  if (!session?.invite) return "";
+  const url = new URL(location.href);
+  url.hash = new URLSearchParams({
+    room: session.id + "." + session.invite,
+    server: session.base,
+  }).toString();
+  return url.href;
+}
+export function readInvite() {
+  const q = new URLSearchParams(location.hash.slice(1)),
+    m = q.get("room")?.match(/^([a-f0-9]{24})\.([\w-]{43})$/);
+  return m ? { id: m[1], secret: m[2], base: q.get("server") } : null;
+}

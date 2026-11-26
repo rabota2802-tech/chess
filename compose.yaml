@@ -1,0 +1,14 @@
+services:
+  chess:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    environment:
+      ORIGINS: ${CHESS_ORIGINS:-http://127.0.0.1:8787,http://localhost:8787}
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - rooms:/data
+    restart: unless-stopped
+volumes:
+  rooms:
