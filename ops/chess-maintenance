@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euo pipefail
+export LC_ALL=C
+umask 077
+cd /opt/chess-online
+compose=(docker compose --env-file .env -p chess-online -f current/compose.yaml)
+backups=/opt/chess-online/backups
+shopt -s nullglob
+daily_copies() {
+  copies=("$backups"/rooms-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].sqlite)
+}
+case ${1:-} in
+  backup)
+    install -d -m 0700 "$backups"
+    exec 9>"$backups/.lock"
+    flock -n 9 || exit 1
+    dest="$backups/rooms-$(date -u +%Y%m%d).sqlite"
+    if [[ ! -f $dest ]]; then
+      stage=$(mktemp -d "$backups/.chess-snapshot-XXXXXXXX")
+      trap 'rm -f -- "$stage/rooms.sqlite"; rmdir -- "$stage"' EXIT
+      # The base image's node account writes only to this private staging dir.
+      chown 1000:1000 "$stage"
+      "${compose[@]}" run --rm -T --no-deps -v "$stage:/backup" chess node server/backup.mjs /backup/rooms.sqlite
+      chown root:root "$stage/rooms.sqlite"
+      ln -- "$stage/rooms.sqlite" "$dest"
+    fi
+    daily_copies
+    for ((i=0; i<${#copies[@]}-7; i++)); do
+      rm -- "${copies[i]}"
+    done
+    ;;
+  check)
+    "${compose[@]}" exec -T chess node -e "fetch('http://127.0.0.1:8787/health').then(async r=>{if(!r.ok||!(await r.json()).ok)process.exit(1)})"
+    curl -fsS --max-time 10 https://chess-api.alliancegrad.ru/health |
+      python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("ok") is not True)'
+    daily_copies
+    (( ${#copies[@]} > 0 )) || { echo "Chess backup missing" >&2; exit 1; }
+    latest=${copies[${#copies[@]}-1]}
+    [[ -s $latest && $(stat -c %Y "$latest") -ge $(($(date +%s)-36*3600)) ]] ||
+      { echo "Chess backup missing or older than 36 hours" >&2; exit 1; }
+    ;;
+  *) echo "Usage: chess-maintenance backup|check" >&2; exit 2 ;;
+esac

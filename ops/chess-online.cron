@@ -1,0 +1,4 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+17 3 * * * root /opt/chess-online/current/ops/chess-maintenance backup || logger -p daemon.err -t chess-online "Daily SQLite backup failed"
+*/5 * * * * root /opt/chess-online/current/ops/chess-maintenance check || logger -p daemon.err -t chess-online "HTTPS, SQLite or backup check failed"
